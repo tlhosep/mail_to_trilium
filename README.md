@@ -22,7 +22,7 @@ Ein Docker-Bot, der ein IMAP-Postfach überwacht, E-Mails ausliest und diese aut
 1. Setze in deiner `.env` das Attribut `DOCKER_MODE=true` (oder entferne die Zeile, Docker erzwingt es via Dockerfile).
 2. Starte den Container:
    ```bash
-   docker-compose up -d --build
+   docker compose up -d --build
    ```
 3. Logs einsehen:
    ```bash
