@@ -1,13 +1,31 @@
+"""
+mail_to_trilium
+---------------
+
+This module scand s a given subdirectory and forwards emails to trilium
+
+Info::
+
+    Author.: (c) Thomas Lüth 2026
+    Email..: info@tlc-it-consulting.com
+    Created: 2026-11-07
+
+Code
+^^^^
+"""
 import os
 import imaplib
 import smtplib
 import email
 from email.header import decode_header
 from email.mime.text import MIMEText
+from email.utils import parseaddr
+from datetime import datetime
 import re
 import time
 import requests
 from dotenv import load_dotenv
+
 
 # Lokale .env laden (wichtig für VS-Code)
 load_dotenv()
@@ -26,12 +44,7 @@ TRILIUM_TOKEN = os.getenv("TRILIUM_ETAPI_TOKEN")
 DEFAULT_FOLDER_NAME = os.getenv("TRILIUM_DEFAULT_FOLDER_NAME", "E-Mails")
 DEFAULT_FOLDER_ID = os.getenv("TRILIUM_DEFAULT_FOLDER_ID")
 ERROR_EMAIL = os.getenv("ERROR_NOTIFICATION_EMAIL")
-
-# VORHER:
-# headers = {
-#     "Authorization": TRILIUM_TOKEN,
-#     "Content-Type": "application/json"
-# }
+TRILIUM_ALLOWED_EMAILS = os.getenv("TRILIUM_ALLOWED_EMAILS", "").split(",")
 
 # NACHHER (KORRIGIERT):
 headers = {
@@ -83,7 +96,8 @@ def get_or_create_folder(folder_name, parent_id="root"):
     res = requests.get(
         f"{TRILIUM_URL}/etapi/notes", 
         headers=headers, 
-        params={"search": search_query}
+        params={"search": search_query},
+        timeout=20
     )
     
     if res.status_code == 200:
@@ -102,7 +116,7 @@ def get_or_create_folder(folder_name, parent_id="root"):
         "title": folder_name,
         "isProtected": False
     }
-    create_res = requests.post(f"{TRILIUM_URL}/etapi/create-note", headers=headers, json=payload)
+    create_res = requests.post(f"{TRILIUM_URL}/etapi/create-note", headers=headers, json=payload, timeout=20)
     if create_res.status_code in [200, 201]:
         return create_res.json()["note"]["noteId"]
     else:
@@ -116,7 +130,7 @@ def create_trilium_note(parent_id, title, content_html, attachments):
         "title": title,
         "content": content_html
     }
-    res = requests.post(f"{TRILIUM_URL}/etapi/create-note", headers=headers, json=payload)
+    res = requests.post(f"{TRILIUM_URL}/etapi/create-note", headers=headers, json=payload, timeout=20)
     if res.status_code not in [200,201]:
         raise Exception(f"Fehler beim Erstellen der Notiz: {res.text}")
     
@@ -131,23 +145,43 @@ def create_trilium_note(parent_id, title, content_html, attachments):
             "title": filename
         }
         # Datei-Notiz-Hülle erstellen
-        file_res = requests.post(f"{TRILIUM_URL}/etapi/create-note", headers=headers, json=file_payload)
+        file_res = requests.post(f"{TRILIUM_URL}/etapi/create-note", headers=headers, json=file_payload, timeout=20)
         if file_res.status_code in [200,201]:
             file_note_id = file_res.json()["note"]["noteId"]
             # Inhalt hochladen via PUT
             requests.put(
                 f"{TRILIUM_URL}/etapi/notes/{file_note_id}/content", 
                 headers={"Authorization": f"Bearer {TRILIUM_TOKEN}", "Content-Type": "application/octet-stream"}, 
-                data=content_bytes
+                data=content_bytes,
+                timeout=20
             )
     return note_id
 
-def process_email(msg_bytes):
+def process_email(msg_bytes)->bool:
+    """Process incioming email
+
+    Args:
+        msg_bytes (_type_): mail-stream
+
+    Returns:
+        bool: True: email processed, False: sender not allowed
+    """
     msg = email.message_from_bytes(msg_bytes)
     subject = decode_mime_words(msg.get("Subject", "Kein Betreff"))
     sender = decode_mime_words(msg.get("From", "Unbekannt"))
+    sender_name, sender_email=parseaddr(sender)
     date_str = msg.get("Date", "Unbekanntes Datum")
-    
+    if date_str != "Unbekanntes Datum":
+        try:
+            clean_date_str=date_str.split(' (')[0]
+            dt = datetime.strptime(clean_date_str, '%a, %d %b %Y %H:%M:%S %z')
+            date_str=dt.strftime('%Y-%m-%d %H:%M:%S')
+        except Exception:
+            pass        
+    if len(TRILIUM_ALLOWED_EMAILS)>0:
+        if sender_email not in TRILIUM_ALLOWED_EMAILS:
+            log(f"Email von {sender_email} mit subject {subject} ist nicht zulässig, wird gelöscht")
+            return False
     log(f"Verarbeite E-Mail: {subject}")
     
     body_html = ""
@@ -180,7 +214,7 @@ def process_email(msg_bytes):
         body_html = f"<pre>{body_text}</pre>"
         
     header_info = f"<div style='background:#f3f3f3; padding:10px; margin-bottom:15px; border-left:4px solid #0076d6;'>" \
-                  f"<b>Von:</b> {sender}<br><b>Datum:</b> {date_str}</div>"
+                  f"<b>Von:</b> {sender_name}<br><b>Email:</b> {sender_email}<br><b>Datum:</b> {date_str}</div>"
     full_content = header_info + body_html
 
     # Zielordner bestimmen
@@ -193,6 +227,7 @@ def process_email(msg_bytes):
         parent_id = get_or_create_folder(DEFAULT_FOLDER_NAME)
 
     create_trilium_note(parent_id, subject, full_content, attachments)
+    return True
 
 def check_mail():
     log("Prüfe Posteingang...")
@@ -202,18 +237,18 @@ def check_mail():
         mail.select("inbox")
         
         # Alle ungelesenen Nachrichten holen (oder einfach alle, da wir löschen/verschieben)
-        status, data = mail.search(None, "ALL")
+        _status, data = mail.search(None, "ALL")
         mail_ids = data[0].split()
         
         log(f"{len(mail_ids)} E-Mails im Posteingang gefunden.")
         
         for m_id in mail_ids:
-            status, msg_data = mail.fetch(m_id, "(RFC822)")
+            _status, msg_data = mail.fetch(m_id, "(RFC822)")
             msg_bytes = msg_data[0][1]
             
             try:
                 process_email(msg_bytes)
-                # Erfolgreich -> Löschen
+                # Erfolgreich oder nicht erlaubt -> Löschen
                 mail.store(m_id, '+FLAGS', '\\Deleted')
                 log("E-Mail erfolgreich verarbeitet und zum Löschen markiert.")
             except Exception as inner_e:

@@ -9,6 +9,7 @@ Ein Docker-Bot, der ein IMAP-Postfach überwacht, E-Mails ausliest und diese aut
 - 📎 **Anhänge:** Werden vollautomatisch als Child-File-Notes an die Hauptnotiz angehängt.
 - 🧼 **Bereinigung:** Erfolgreiche Mails werden gelöscht, fehlerhafte Mails landen im IMAP-Ordner `Fehler`.
 - 🚨 **Alarmsystem:** Sendet bei Fehlern eine Benachrichtigung per E-Mail.
+- **Filter:** Nur angegebene zulässige emails werden verarbeitet, andere werden gelöscht, verhindert Spam
 
 ## Lokales Testen (VS-Code)
 1. Kopiere `.env.example` zu `.env` und fülle deine echten Daten aus.

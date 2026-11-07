@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   email_to_trilium:
     build: .
@@ -7,3 +5,13 @@ services:
     restart: always
     env_file:
       - .env
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "500k"
+        max-file: "2"
+    labels:
+      - "wud.trigger.exclude=dockercompose.gitlab"
+      - "wud.watch=true"
+      - "wud.watch.digest=true"
+      - "wud.trigger=docker.qnap"
